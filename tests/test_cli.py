@@ -52,6 +52,9 @@ def test_run_prints_score_and_artifact_path(tmp_path, monkeypatch, capsys) -> No
 
     def fake_run_benchmark(**options):
         captured.update(options)
+        progress = options["progress"]
+        progress(1, 4, 0.25)
+        progress(4, 4, 1.25)
         return RunSummary(
             ScoreSummary(runs=4, passed=3, failed=1, issues_by_rule={"G010": 1}),
             output_directory,
@@ -79,7 +82,12 @@ def test_run_prints_score_and_artifact_path(tmp_path, monkeypatch, capsys) -> No
     output = capsys.readouterr()
     assert exit_code == 0
     assert output.out == "75.00\n"
-    assert output.err == f"results: {output_directory}\n"
+    assert output.err == (
+        "progress: 1/4 (25.0%) elapsed 00:00:00 eta 00:00:00\n"
+        "progress: 4/4 (100.0%) elapsed 00:00:01 eta 00:00:00\n"
+        f"results: {output_directory}\n"
+    )
+    assert callable(captured.pop("progress"))
     assert captured == {
         "model_reference": "models/example",
         "suite_reference": "polish-prose-v1",

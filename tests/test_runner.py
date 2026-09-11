@@ -92,3 +92,22 @@ def test_failed_run_updates_manifest(tmp_path) -> None:
     manifest = json.loads((output_directory / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["status"] == "failed"
     assert manifest["error"]["type"] == "RunnerError"
+
+
+def test_interrupted_run_updates_manifest(tmp_path) -> None:
+    class InterruptedGenerator(FakeGenerator):
+        def generate(self, prompt: str, settings: GenerationSettings, seed: int) -> GeneratedText:
+            raise KeyboardInterrupt
+
+    output_directory = tmp_path / "interrupted"
+    with pytest.raises(KeyboardInterrupt):
+        run_benchmark(
+            model_reference="fake-model",
+            runs=1,
+            output_directory=output_directory,
+            generator=InterruptedGenerator(),
+        )
+
+    manifest = json.loads((output_directory / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "interrupted"
+    assert manifest["error"]["type"] == "KeyboardInterrupt"

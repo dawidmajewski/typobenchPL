@@ -4,6 +4,7 @@ import json
 import re
 import time
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -49,6 +50,7 @@ def run_benchmark(
     revision: str | None = None,
     device: str = "auto",
     generator: TextGenerator | None = None,
+    progress: Callable[[int, int, float], None] | None = None,
 ) -> RunSummary:
     if runs <= 0:
         raise RunnerError("runs must be greater than zero")
@@ -118,6 +120,8 @@ def run_benchmark(
                 }
                 output_stream.write(json.dumps(record, ensure_ascii=False) + "\n")
                 output_stream.flush()
+                if progress is not None:
+                    progress(run_index + 1, runs, time.perf_counter() - started)
 
         duration = time.perf_counter() - started
         score = ScoreSummary(
@@ -138,10 +142,10 @@ def run_benchmark(
         )
         _write_json(manifest_path, manifest)
         return summary
-    except Exception as error:
+    except (Exception, KeyboardInterrupt) as error:
         manifest.update(
             {
-                "status": "failed",
+                "status": "interrupted" if isinstance(error, KeyboardInterrupt) else "failed",
                 "finished_at": datetime.now(UTC).isoformat(),
                 "error": {"type": type(error).__name__, "message": str(error)},
             }

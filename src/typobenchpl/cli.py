@@ -111,20 +111,54 @@ def _verify(args: argparse.Namespace) -> int:
 
 
 def _run_model(args: argparse.Namespace) -> int:
-    summary = run_benchmark(
-        model_reference=args.model,
-        suite_reference=args.suite,
-        runs=args.runs,
-        output_directory=args.output_dir,
-        revision=args.revision,
-        device=args.device,
-    )
+    interactive = sys.stderr.isatty()
+    progress_started = False
+
+    def report_progress(completed: int, total: int, elapsed: float) -> None:
+        nonlocal progress_started
+        report_interval = max(1, total // 100)
+        if not interactive and completed < total and completed % report_interval != 0:
+            return
+
+        eta = elapsed / completed * (total - completed)
+        message = (
+            f"progress: {completed}/{total} ({100 * completed / total:.1f}%) "
+            f"elapsed {_format_duration(elapsed)} eta {_format_duration(eta)}"
+        )
+        print(
+            f"\r{message}" if interactive else message,
+            end="" if interactive else "\n",
+            file=sys.stderr,
+            flush=True,
+        )
+        progress_started = True
+
+    try:
+        summary = run_benchmark(
+            model_reference=args.model,
+            suite_reference=args.suite,
+            runs=args.runs,
+            output_directory=args.output_dir,
+            revision=args.revision,
+            device=args.device,
+            progress=report_progress,
+        )
+    finally:
+        if interactive and progress_started:
+            print(file=sys.stderr)
+
     if args.json:
         print(json.dumps(summary.as_dict(), ensure_ascii=False, sort_keys=True))
     else:
         print(f"{summary.score.score:.2f}")
         print(f"results: {summary.output_directory}", file=sys.stderr)
     return 0
+
+
+def _format_duration(seconds: float) -> str:
+    minutes, seconds = divmod(max(0, int(seconds)), 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
 
 if __name__ == "__main__":

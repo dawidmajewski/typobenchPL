@@ -85,10 +85,12 @@ uv run typobenchpl run \
   -n 1000
 ```
 
-Po zakończeniu komenda zapisuje wynik procentowy do `stdout`, a ścieżkę katalogu
-z artefaktami do `stderr`. W terminalu widoczne są obie linie:
+Podczas generowania komenda raportuje na `stderr` postęp, czas i przewidywany czas
+zakończenia. Po zakończeniu zapisuje wynik procentowy do `stdout`, a ścieżkę katalogu
+z artefaktami do `stderr`:
 
 ```text
+progress: 1000/1000 (100.0%) elapsed 00:09:54 eta 00:00:00
 97.40
 results: runs/GoLLeM-110M-PL-v3/polish-prose-v1-<timestamp>
 ```
