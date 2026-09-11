@@ -1,0 +1,28 @@
+{"id":"pass-normal-001","text":"To jest poprawne zdanie.","expected":1}
+{"id":"pass-normal-002","text":"Zażółć gęślą jaźń.","expected":1}
+{"id":"pass-normal-003","text":"Krótki nagłówek","expected":1}
+{"id":"pass-normal-004","text":"Pierwszy akapit.\nDrugi akapit.","expected":1}
+{"id":"pass-number-001","text":"Temperatura wynosi 3,14°C.","expected":1}
+{"id":"pass-number-002","text":"Spotkanie zaczyna się o 12:30.","expected":1}
+{"id":"pass-number-003","text":"Wynik to 1:2.","expected":1}
+{"id":"pass-number-004","text":"Wersja 1.2.3 działa poprawnie.","expected":1}
+{"id":"pass-number-005","text":"Serwer ma adres 192.168.1.1.","expected":1}
+{"id":"pass-punctuation-001","text":"Naprawdę?!","expected":1}
+{"id":"pass-punctuation-002","text":"Czyżby!?","expected":1}
+{"id":"pass-punctuation-003","text":"Serio??","expected":1}
+{"id":"pass-punctuation-004","text":"Nie!!","expected":1}
+{"id":"pass-punctuation-005","text":"To było... interesujące.","expected":1}
+{"id":"pass-punctuation-006","text":"To było… interesujące.","expected":1}
+{"id":"pass-punctuation-007","text":"Ha ha, bardzo zabawne.","expected":1}
+{"id":"pass-punctuation-008","text":"J.K. Rowling napisała książkę.","expected":1}
+{"id":"pass-quotes-001","text":"Powiedział: „Nie wiem”.","expected":1}
+{"id":"pass-quotes-002","text":"Jan zapytał: „Naprawdę?!”","expected":1}
+{"id":"pass-brackets-001","text":"To jest (poprawny) przykład.","expected":1}
+{"id":"pass-brackets-002","text":"To jest ([zagnieżdżony]) przykład.","expected":1}
+{"id":"pass-brackets-003","text":"Zbiory {a, b} oraz [c, d] są opisane.","expected":1}
+{"id":"pass-url-001","text":"Adres to https://example.com/test.","expected":1}
+{"id":"pass-url-002","text":"Adres to https://example.com/a,,b.","expected":1}
+{"id":"pass-url-003","text":"Adres to https://example.com/a;;b?x=...","expected":1}
+{"id":"pass-url-004","text":"Dokument jest pod https://example.com/a_(b).","expected":1}
+{"id":"pass-email-001","text":"Napisz na test@example.com.","expected":1}
+{"id":"pass-whitespace-001","text":"Kolumna pierwsza\tkolumna druga.","expected":1}
