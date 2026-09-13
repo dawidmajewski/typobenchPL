@@ -28,10 +28,12 @@ def test_scores_exact_number_of_records() -> None:
 
     summary = score_stream(stream, runs=4)
 
-    assert summary.score == 50.0
+    assert summary.clean_output_rate == 50.0
     assert summary.passed == 2
     assert summary.failed == 2
     assert summary.issues_by_rule == {"G010": 1, "G011": 1}
+    assert summary.total_issues == 2
+    assert summary.evaluated_chars == sum(len(record["text"]) for record in records[:4])
 
 
 def test_score_fails_when_there_are_too_few_records() -> None:

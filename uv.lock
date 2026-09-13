@@ -1011,6 +1011,7 @@ source = { editable = "." }
 
 [package.optional-dependencies]
 hf = [
+    { name = "safetensors" },
     { name = "torch" },
     { name = "transformers" },
 ]
@@ -1023,6 +1024,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "safetensors", marker = "extra == 'hf'", specifier = ">=0.4" },
     { name = "torch", marker = "extra == 'hf'", specifier = ">=2.6" },
     { name = "transformers", marker = "extra == 'hf'", specifier = ">=5.0,<6" },
 ]

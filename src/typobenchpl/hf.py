@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from typobenchpl.suite import GenerationSettings
 
@@ -29,7 +29,7 @@ class HuggingFaceCausalGenerator:
         self._torch = torch
         self._set_seed = set_seed
         self._transformers_version = transformers.__version__
-        self.device = _resolve_device(torch, device)
+        self.device = resolve_device(torch, device)
 
         load_options = {"revision": revision} if revision is not None else {}
         try:
@@ -106,10 +106,20 @@ class HuggingFaceCausalGenerator:
             skip_special_tokens=True,
             clean_up_tokenization_spaces=False,
         )
+        eos_token_id = self.tokenizer.eos_token_id
+        if eos_token_id is None:
+            eos_token_id = getattr(self.model.config, "eos_token_id", None)
+        eos_token_ids = {eos_token_id} if isinstance(eos_token_id, int) else set(eos_token_id or ())
+        finished_with_eos = bool(generated_ids and generated_ids[-1] in eos_token_ids)
         return GeneratedText(
             completion=completion,
             prompt_tokens=input_length,
             generated_tokens=len(generated_ids),
+            finish_reason=(
+                "eos"
+                if finished_with_eos or len(generated_ids) < settings.max_new_tokens
+                else "max_tokens"
+            ),
         )
 
     def _apply_bos(self, input_ids: Any, attention_mask: Any, mode: str) -> tuple[Any, Any]:
@@ -152,15 +162,22 @@ class HuggingFaceCausalGenerator:
 
 
 class GeneratedText:
-    __slots__ = ("completion", "generated_tokens", "prompt_tokens")
+    __slots__ = ("completion", "finish_reason", "generated_tokens", "prompt_tokens")
 
-    def __init__(self, completion: str, prompt_tokens: int, generated_tokens: int) -> None:
+    def __init__(
+        self,
+        completion: str | bytes,
+        prompt_tokens: int,
+        generated_tokens: int,
+        finish_reason: Literal["eos", "max_tokens"] = "max_tokens",
+    ) -> None:
         self.completion = completion
         self.prompt_tokens = prompt_tokens
         self.generated_tokens = generated_tokens
+        self.finish_reason = finish_reason
 
 
-def _resolve_device(torch: Any, requested: str) -> Any:
+def resolve_device(torch: Any, requested: str) -> Any:
     if requested == "auto":
         if torch.cuda.is_available():
             return torch.device("cuda")

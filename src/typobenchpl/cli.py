@@ -37,7 +37,18 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser = subparsers.add_parser("run", help="generate and score texts with a causal LM")
     run_parser.add_argument("--model", required=True, help="Hugging Face model ID or local path")
     run_parser.add_argument("--suite", default="polish-prose-v1", help="suite name or directory")
-    run_parser.add_argument("-n", "--runs", type=int, default=1000)
+    run_parser.add_argument(
+        "--chars-per-prompt",
+        type=int,
+        default=3000,
+        help="minimum evaluated characters required for each prompt",
+    )
+    run_parser.add_argument(
+        "--max-attempts-per-prompt",
+        type=int,
+        default=100,
+        help="maximum generations allowed for each prompt",
+    )
     run_parser.add_argument("--revision", help="Hugging Face model revision")
     run_parser.add_argument("--device", default="auto", help="auto, cpu, cuda, cuda:N, or mps")
     run_parser.add_argument("--output-dir", type=Path, help="new directory for run artifacts")
@@ -60,6 +71,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (CorpusError, OSError, UnicodeError, ValueError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
+    except KeyboardInterrupt:
+        print("interrupted", file=sys.stderr)
+        return 130
 
 
 def entrypoint() -> int:
@@ -95,7 +109,8 @@ def _score(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(summary.as_dict(), ensure_ascii=False, sort_keys=True))
     else:
-        print(f"{summary.score:.2f}")
+        rate = summary.issues_per_10k_chars
+        print("n/a" if rate is None else f"{rate:.3f}")
     return 0
 
 
@@ -113,16 +128,17 @@ def _verify(args: argparse.Namespace) -> int:
 def _run_model(args: argparse.Namespace) -> int:
     interactive = sys.stderr.isatty()
     progress_started = False
+    last_reported_percentage = -1
 
     def report_progress(completed: int, total: int, elapsed: float) -> None:
-        nonlocal progress_started
-        report_interval = max(1, total // 100)
-        if not interactive and completed < total and completed % report_interval != 0:
+        nonlocal last_reported_percentage, progress_started
+        percentage = min(100, int(100 * completed / total))
+        if not interactive and completed < total and percentage <= last_reported_percentage:
             return
 
         eta = elapsed / completed * (total - completed)
         message = (
-            f"progress: {completed}/{total} ({100 * completed / total:.1f}%) "
+            f"coverage: {completed}/{total} chars ({100 * completed / total:.1f}%) "
             f"elapsed {_format_duration(elapsed)} eta {_format_duration(eta)}"
         )
         print(
@@ -131,13 +147,15 @@ def _run_model(args: argparse.Namespace) -> int:
             file=sys.stderr,
             flush=True,
         )
+        last_reported_percentage = percentage
         progress_started = True
 
     try:
         summary = run_benchmark(
             model_reference=args.model,
             suite_reference=args.suite,
-            runs=args.runs,
+            chars_per_prompt=args.chars_per_prompt,
+            max_attempts_per_prompt=args.max_attempts_per_prompt,
             output_directory=args.output_dir,
             revision=args.revision,
             device=args.device,
@@ -150,9 +168,20 @@ def _run_model(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(summary.as_dict(), ensure_ascii=False, sort_keys=True))
     else:
-        print(f"{summary.score.score:.2f}")
+        rate = summary.score.issues_per_10k_chars
+        print("n/a" if rate is None else f"{rate:.3f}")
         print(f"results: {summary.output_directory}", file=sys.stderr)
-    return 0
+    if not summary.coverage_complete:
+        missing = sum(
+            characters < summary.chars_per_prompt
+            for characters in (summary.prompt_coverage or {}).values()
+        )
+        print(
+            f"incomplete: {missing} {'prompt' if missing == 1 else 'prompts'} "
+            "did not reach the character quota",
+            file=sys.stderr,
+        )
+    return 0 if summary.coverage_complete else 2
 
 
 def _format_duration(seconds: float) -> str:

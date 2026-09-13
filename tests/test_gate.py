@@ -81,3 +81,13 @@ def test_result_serialization() -> None:
         "status": "PASS",
         "issues": [],
     }
+
+
+def test_reports_all_independent_issues() -> None:
+    result = analyze("Źle,, Ala;ma :tekst.")
+
+    assert [issue.rule_id for issue in result.issues] == [
+        RuleId.REPEATED_COMMA,
+        RuleId.MISSING_SPACE_AFTER_SEMICOLON,
+        RuleId.SPACE_BEFORE_COLON,
+    ]

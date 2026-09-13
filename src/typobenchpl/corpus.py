@@ -21,17 +21,40 @@ class ScoreSummary:
     passed: int
     failed: int
     issues_by_rule: dict[str, int]
+    generated_chars: int | None = None
+    evaluated_chars: int = 0
+    total_issues: int = 0
+    invalid_outputs: int = 0
+    truncated_outputs: int = 0
 
     @property
-    def score(self) -> float:
+    def clean_output_rate(self) -> float:
         return self.passed / self.runs * 100
 
+    @property
+    def issues_per_10k_chars(self) -> float | None:
+        if self.evaluated_chars == 0:
+            return None
+        return self.total_issues / self.evaluated_chars * 10_000
+
     def as_dict(self) -> dict[str, object]:
+        generated_chars = (
+            self.evaluated_chars if self.generated_chars is None else self.generated_chars
+        )
         return {
-            "score": round(self.score, 2),
+            "clean_output_rate": round(self.clean_output_rate, 2),
             "runs": self.runs,
             "passed": self.passed,
             "failed": self.failed,
+            "generated_chars": generated_chars,
+            "evaluated_chars": self.evaluated_chars,
+            "discarded_chars": generated_chars - self.evaluated_chars,
+            "total_issues": self.total_issues,
+            "issues_per_10k_chars": (
+                None if self.issues_per_10k_chars is None else round(self.issues_per_10k_chars, 3)
+            ),
+            "invalid_outputs": self.invalid_outputs,
+            "truncated_outputs": self.truncated_outputs,
             "issues_by_rule": self.issues_by_rule,
         }
 
@@ -62,6 +85,11 @@ def score_stream(stream: IO[str], runs: int = 1000) -> ScoreSummary:
 
     passed = 0
     processed = 0
+    generated_chars = 0
+    evaluated_chars = 0
+    total_issues = 0
+    invalid_outputs = 0
+    truncated_outputs = 0
     issues: Counter[str] = Counter()
 
     records = iter(_records(stream))
@@ -70,15 +98,44 @@ def score_stream(stream: IO[str], runs: int = 1000) -> ScoreSummary:
             line_number, record = next(records)
         except StopIteration:
             break
-        text = record.get("text")
-        if not isinstance(text, str):
-            raise CorpusError(f"line {line_number}: 'text' must be a string")
+        text: str | bytes
+        text_bytes_hex = record.get("text_bytes_hex")
+        if text_bytes_hex is not None:
+            if not isinstance(text_bytes_hex, str):
+                raise CorpusError(f"line {line_number}: 'text_bytes_hex' must be a string")
+            try:
+                text = bytes.fromhex(text_bytes_hex)
+            except ValueError as error:
+                raise CorpusError(f"line {line_number}: invalid 'text_bytes_hex'") from error
+        else:
+            text = record.get("text")
+            if not isinstance(text, str):
+                raise CorpusError(f"line {line_number}: 'text' must be a string")
 
         result = analyze(text)
         passed += result.value
         processed += 1
-        if result.issue is not None:
-            issues[result.issue.rule_id.value] += 1
+        record_chars = record.get("evaluated_chars", len(text) if isinstance(text, str) else 0)
+        if not isinstance(record_chars, int) or isinstance(record_chars, bool) or record_chars < 0:
+            raise CorpusError(
+                f"line {line_number}: 'evaluated_chars' must be a non-negative integer"
+            )
+        record_generated_chars = record.get("generated_chars", record_chars)
+        if (
+            not isinstance(record_generated_chars, int)
+            or isinstance(record_generated_chars, bool)
+            or record_generated_chars < record_chars
+        ):
+            raise CorpusError(
+                f"line {line_number}: 'generated_chars' must be an integer >= evaluated_chars"
+            )
+        generated_chars += record_generated_chars
+        evaluated_chars += record_chars
+        total_issues += len(result.issues)
+        invalid_outputs += any(issue.rule_id.value == "G001" for issue in result.issues)
+        truncated_outputs += record.get("truncated") is True
+        for issue in result.issues:
+            issues[issue.rule_id.value] += 1
 
     if processed < runs:
         raise CorpusError(f"expected {runs} texts, found {processed}")
@@ -88,6 +145,11 @@ def score_stream(stream: IO[str], runs: int = 1000) -> ScoreSummary:
         passed=passed,
         failed=runs - passed,
         issues_by_rule=dict(sorted(issues.items())),
+        generated_chars=generated_chars,
+        evaluated_chars=evaluated_chars,
+        total_issues=total_issues,
+        invalid_outputs=invalid_outputs,
+        truncated_outputs=truncated_outputs,
     )
 
 

@@ -80,7 +80,11 @@ class Issue:
 
 @dataclass(frozen=True, slots=True)
 class GateResult:
-    issue: Issue | None = None
+    issues: tuple[Issue, ...] = ()
+
+    @property
+    def issue(self) -> Issue | None:
+        return self.issues[0] if self.issues else None
 
     @property
     def passed(self) -> bool:
@@ -94,7 +98,7 @@ class GateResult:
         return {
             "result": self.value,
             "status": "PASS" if self.passed else "FAIL",
-            "issues": [] if self.issue is None else [self.issue.as_dict()],
+            "issues": [issue.as_dict() for issue in self.issues],
         }
 
 
@@ -129,6 +133,7 @@ def analyze(value: str | bytes) -> GateResult:
     ranges = protected_ranges(text)
     range_index = 0
     stack: list[tuple[str, int]] = []
+    issues: list[Issue] = []
     index = 0
 
     while index < len(text):
@@ -138,9 +143,13 @@ def analyze(value: str | bytes) -> GateResult:
         character = text[index]
         category = unicodedata.category(character)
         if category == "Cc" and character not in _ALLOWED_CONTROLS:
-            return _failed(RuleId.FORBIDDEN_CONTROL, index, index + 1)
+            issues.append(Issue(RuleId.FORBIDDEN_CONTROL, index, index + 1))
+            index += 1
+            continue
         if category == "Cs":
-            return _failed(RuleId.UNPAIRED_SURROGATE, index, index + 1)
+            issues.append(Issue(RuleId.UNPAIRED_SURROGATE, index, index + 1))
+            index += 1
+            continue
 
         if _is_protected(index, ranges, range_index):
             index += 1
@@ -149,61 +158,69 @@ def analyze(value: str | bytes) -> GateResult:
         if character == ",":
             run_end = _run_end(text, index, character)
             if run_end - index > 1:
-                return _failed(RuleId.REPEATED_COMMA, index, run_end)
+                issues.append(Issue(RuleId.REPEATED_COMMA, index, run_end))
+                index = run_end
+                continue
             issue = _space_before(text, index, RuleId.SPACE_BEFORE_COMMA)
             if issue:
-                return GateResult(issue)
+                issues.append(issue)
             if _between_letters_without_space(text, index):
-                return _failed(RuleId.MISSING_SPACE_AFTER_COMMA, index, index + 1)
+                issues.append(Issue(RuleId.MISSING_SPACE_AFTER_COMMA, index, index + 1))
 
         elif character == ";":
             run_end = _run_end(text, index, character)
             if run_end - index > 1:
-                return _failed(RuleId.REPEATED_SEMICOLON, index, run_end)
+                issues.append(Issue(RuleId.REPEATED_SEMICOLON, index, run_end))
+                index = run_end
+                continue
             issue = _space_before(text, index, RuleId.SPACE_BEFORE_SEMICOLON)
             if issue:
-                return GateResult(issue)
+                issues.append(issue)
             if _between_letters_without_space(text, index):
-                return _failed(RuleId.MISSING_SPACE_AFTER_SEMICOLON, index, index + 1)
+                issues.append(Issue(RuleId.MISSING_SPACE_AFTER_SEMICOLON, index, index + 1))
 
         elif character == ".":
             run_end = _run_end(text, index, character)
             run_length = run_end - index
             if run_length not in {1, 3}:
-                return _failed(RuleId.INVALID_DOT_RUN, index, run_end)
+                issues.append(Issue(RuleId.INVALID_DOT_RUN, index, run_end))
             if run_length == 1:
                 issue = _space_before(text, index, RuleId.SPACE_BEFORE_PERIOD)
                 if issue:
-                    return GateResult(issue)
+                    issues.append(issue)
             index = run_end - 1
 
         elif character == ":":
             issue = _space_before(text, index, RuleId.SPACE_BEFORE_COLON)
             if issue:
-                return GateResult(issue)
+                issues.append(issue)
             if _between_letters_without_space(text, index):
-                return _failed(RuleId.MISSING_SPACE_AFTER_COLON, index, index + 1)
+                issues.append(Issue(RuleId.MISSING_SPACE_AFTER_COLON, index, index + 1))
 
         elif character == "?":
             issue = _space_before(text, index, RuleId.SPACE_BEFORE_QUESTION)
             if issue:
-                return GateResult(issue)
+                issues.append(issue)
             if _ends_punctuation_run_before_letter(text, index):
-                return _failed(
-                    RuleId.MISSING_SPACE_AFTER_QUESTION_OR_EXCLAMATION,
-                    index,
-                    index + 1,
+                issues.append(
+                    Issue(
+                        RuleId.MISSING_SPACE_AFTER_QUESTION_OR_EXCLAMATION,
+                        index,
+                        index + 1,
+                    )
                 )
 
         elif character == "!":
             issue = _space_before(text, index, RuleId.SPACE_BEFORE_EXCLAMATION)
             if issue:
-                return GateResult(issue)
+                issues.append(issue)
             if _ends_punctuation_run_before_letter(text, index):
-                return _failed(
-                    RuleId.MISSING_SPACE_AFTER_QUESTION_OR_EXCLAMATION,
-                    index,
-                    index + 1,
+                issues.append(
+                    Issue(
+                        RuleId.MISSING_SPACE_AFTER_QUESTION_OR_EXCLAMATION,
+                        index,
+                        index + 1,
+                    )
                 )
 
         elif character in _OPENING_BRACKETS:
@@ -211,18 +228,31 @@ def analyze(value: str | bytes) -> GateResult:
 
         elif character in _CLOSING_BRACKETS:
             if not stack:
-                return _failed(RuleId.UNMATCHED_BRACKET, index, index + 1)
-            if stack[-1][0] != _CLOSING_BRACKETS[character]:
-                return _failed(RuleId.INVALID_BRACKET_ORDER, index, index + 1)
-            stack.pop()
+                issues.append(Issue(RuleId.UNMATCHED_BRACKET, index, index + 1))
+            elif stack[-1][0] == _CLOSING_BRACKETS[character]:
+                stack.pop()
+            else:
+                issues.append(Issue(RuleId.INVALID_BRACKET_ORDER, index, index + 1))
+                expected = _CLOSING_BRACKETS[character]
+                matching_index = next(
+                    (
+                        position
+                        for position in range(len(stack) - 1, -1, -1)
+                        if stack[position][0] == expected
+                    ),
+                    None,
+                )
+                if matching_index is not None:
+                    del stack[matching_index]
 
         index += 1
 
-    if stack:
-        _, opening_index = stack[0]
-        return _failed(RuleId.UNMATCHED_BRACKET, opening_index, opening_index + 1)
+    issues.extend(
+        Issue(RuleId.UNMATCHED_BRACKET, opening_index, opening_index + 1)
+        for _, opening_index in stack
+    )
 
-    return GateResult()
+    return GateResult(tuple(sorted(issues, key=lambda issue: (issue.start, issue.end))))
 
 
 def _failed(
@@ -231,7 +261,7 @@ def _failed(
     end: int,
     offset_unit: Literal["codepoint", "byte"] = "codepoint",
 ) -> GateResult:
-    return GateResult(Issue(rule_id, start, end, offset_unit))
+    return GateResult((Issue(rule_id, start, end, offset_unit),))
 
 
 def _is_protected(index: int, ranges: tuple[tuple[int, int], ...], range_index: int) -> bool:

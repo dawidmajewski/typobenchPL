@@ -1,6 +1,8 @@
-# typobenchpl
+# typobenchPL
 
-`typobenchpl` jest benchmarkiem polskich tekstów generowanych przez modele causal LM. Uruchamiany na stałym zestawie promptów, zwraca wynik od `0` do `100` na podstawie jednoznacznych, prymitywnych błędów zapisu.
+`typobenchPL` jest benchmarkiem polskich tekstów generowanych przez małe modele causal LM.
+Uruchamiany na stałym zestawie promptów, zwraca liczbę jednoznacznych błędów zapisu
+na 10 000 ocenionych znaków.
 
 Środowisko uruchomieniowe zawiera gotowy zestaw do testowania autoregresyjnych modeli językowych typu decoder-only (causal LM).
 
@@ -10,40 +12,47 @@ Benchmark ocenia jednoznaczne błędy na poziomie znaków i interpunkcji. Zakres
 obejmuje błędne odstępy, powtórzone separatory, niepoprawne ciągi kropek,
 uszkodzony Unicode i niezbilansowane nawiasy.
 
-Każdy wygenerowany tekst otrzymuje:
+Każdy wygenerowany tekst otrzymuje pomocniczy wynik:
 
 - `1` (`PASS`), jeśli nie znaleziono żadnego obsługiwanego błędu;
 - `0` (`FAIL`), jeśli znaleziono przynajmniej jeden pewny błąd.
 
-Wynik modelu jest procentem zaliczonych generacji:
+Główna metryka modelu uwzględnia wszystkie wykryte błędy:
 
 ```text
-score = 100 * liczba PASS / liczba wszystkich generacji
+issues_per_10k_chars = 10 000 * liczba błędów / liczba ocenionych znaków
 ```
 
-Wynik `100` oznacza brak wykrytych błędów z aktualnej listy reguł. Zakres wyniku
-obejmuje wyłącznie reguły opisane na końcu README.
+Niższy wynik jest lepszy, a `0` oznacza brak wykrytych błędów z aktualnej listy
+reguł. Do mianownika wliczane są wyłącznie ocenione znaki completion; prompt jest
+sprawdzany razem z completion, ale nie zwiększa pokrycia. Pomocniczy
+`clean_output_rate` podaje procent generacji bez błędu.
 
 ## Przebieg benchmarku
 
 ```text
-100 promptów z polish-prose-v1
+100 promptów z polish-prose-v1, po co najmniej 3000 ocenionych znaków completion
               ↓
-model generuje n completions
+model generuje do osiągnięcia kwoty dla każdego promptu
               ↓
 prompt + completion
               ↓
-deterministyczny PASS/FAIL dla każdego tekstu
+deterministyczna lista wszystkich błędów
               ↓
-średnia wyników * 100
+liczba błędów na 10 000 ocenionych znaków
 ```
 
-Model jest ładowany raz. Prompty są wybierane cyklicznie, a kolejne
-generacje otrzymują seedy `42`, `43`, `44` [...], co pozwala na odtworzenie konfiguracji.
+Model jest ładowany raz. Dla każdego promptu generowanie trwa do osiągnięcia kwoty
+znaków albo limitu prób. Seed jest wyliczany z indeksu promptu i numeru próby, dzięki
+czemu kolejność generacji jest deterministyczna.
+
+Jeśli generacja osiągnie `max_new_tokens`, oceniany jest jej najdłuższy prefiks
+zakończony pełnym zdaniem. Urwany ogon nie zwiększa pokrycia i nie powoduje
+fałszywego błędu niedomkniętego nawiasu. Informacja o ucięciu pozostaje w artefaktach.
 
 ## Instalacja
 
-Projekt wymaga Python >3.12 oraz `uv`.
+Projekt wymaga Pythona 3.12 lub nowszego oraz `uv`.
 
 Do używania samego walidatora wystarczy:
 
@@ -51,16 +60,16 @@ Do używania samego walidatora wystarczy:
 uv sync
 ```
 
-Do uruchamiania modeli Hugging Face:
+Do uruchamiania modeli:
 
 ```bash
 uv sync --extra hf
 ```
 
-`hf` instaluje `torch` i `transformers` wymagane do uruchomienia komendy `run`.
-Podstawowa instalacja obsługuje komendy `check`, `score` i `verify`.
+`hf` instaluje `torch`, `transformers` i `safetensors` wymagane do uruchomienia
+komendy `run`. Podstawowa instalacja obsługuje komendy `check`, `score` i `verify`.
 
-## Uruchomienie modelu z Hugging Face
+## Uruchomienie modelu
 
 Model można wskazać bezpośrednio przez identyfikator Hugging Face. Zostanie
 pobrany do standardowego cache Hugging Face i uruchomiony lokalnie:
@@ -68,8 +77,7 @@ pobrany do standardowego cache Hugging Face i uruchomiony lokalnie:
 ```bash
 uv run typobenchpl run \
   --model SlayerLab/GoLLeM-110M-PL-v3 \
-  --suite polish-prose-v1 \
-  -n 1000
+  --suite polish-prose-v1
 ```
 
 Model można też pobrać do katalogu `models/` i uruchomić ze ścieżki. Katalog
@@ -81,22 +89,44 @@ hf download SlayerLab/GoLLeM-110M-PL-v3 \
 
 uv run typobenchpl run \
   --model models/GoLLeM-110M-PL-v3 \
-  --suite polish-prose-v1 \
-  -n 1000
+  --suite polish-prose-v1
 ```
 
-Podczas generowania komenda raportuje na `stderr` postęp, czas i przewidywany czas
-zakończenia. Po zakończeniu zapisuje wynik procentowy do `stdout`, a ścieżkę katalogu
-z artefaktami do `stderr`:
+Na macOS można zapobiec uśpieniu komputera podczas długiego uruchomienia:
+
+```bash
+caffeinate -i uv run typobenchpl run \
+  --model models/GoLLeM-110M-PL-v3 \
+  --suite polish-prose-v1
+```
+
+Obsługiwane są również lokalne, autoregresyjne modele Transformer operujące na bajtach
+UTF-8. Benchmark rozpoznaje zgodną architekturę na podstawie `config.json` i ładuje
+wagi `safetensors` bez wykonywania kodu Python dołączonego do repozytorium modelu:
+
+```bash
+hf download SlayerLab/claude-data-set-tuned-8m-b74a2550 \
+  --local-dir models/claude-data-set-tuned-8m-b74a2550
+
+uv run typobenchpl run \
+  --model models/claude-data-set-tuned-8m-b74a2550 \
+  --suite polish-prose-v1
+```
+
+Podczas generowania komenda raportuje na `stderr` pokrycie znaków, czas i przewidywany
+czas zakończenia. Po zakończeniu zapisuje liczbę błędów na 10 000 ocenionych znaków do
+`stdout`, a ścieżkę katalogu z artefaktami do `stderr`:
 
 ```text
-progress: 1000/1000 (100.0%) elapsed 00:09:54 eta 00:00:00
-97.40
+coverage: 300000/300000 chars (100.0%) elapsed 00:09:54 eta 00:00:00
+2.000
 results: runs/GoLLeM-110M-PL-v3/polish-prose-v1-<timestamp>
 ```
 
-Rozdzielenie strumieni pozwala skryptom automatyzującym benchmark przechwycić sam wynik liczbowy bez
-ścieżki do artefaktów.
+Rozdzielenie strumieni pozwala skryptom automatyzującym benchmark przechwycić sam wynik
+liczbowy bez ścieżki do artefaktów. W trybie `--json` komenda zapisuje na `stdout`
+pełne podsumowanie wraz ze ścieżką `output_directory` i nie wypisuje osobnej linii
+`results:`.
 
 ## Parametry `run`
 
@@ -108,18 +138,20 @@ uv run typobenchpl run --model MODEL [opcje]
 | --- | --- | --- |
 | `--model` | wymagana | Identyfikator Hugging Face albo lokalny katalog modelu |
 | `--suite` | `polish-prose-v1` | Nazwa wbudowanej suite albo ścieżka do własnej |
-| `-n`, `--runs` | `1000` | Liczba generacji i ocenianych tekstów |
-| `--revision` | domyślna rewizja | Branch, tag lub commit modelu Hugging Face |
+| `--chars-per-prompt` | `3000` | Minimalna liczba ocenionych znaków dla każdego promptu |
+| `--max-attempts-per-prompt` | `100` | Maksymalna liczba generacji dla jednego promptu |
+| `--revision` | domyślna rewizja | Branch, tag lub commit modelu Hugging Face; nie dotyczy lokalnych modeli bajtowych |
 | `--device` | `auto` | `cpu`, `cuda`, `cuda:N`, `mps` albo wybór automatyczny |
-| `--output-dir` | automatyczny | Nowy katalog na artefakty uruchomienia |
-| `--json` | wyłączone | Zwraca pełne podsumowanie JSON zamiast samego wyniku |
+| `--output-dir` | automatyczny | Ścieżka nowego, nieistniejącego katalogu na artefakty |
+| `--json` | wyłączone | Zwraca pełne podsumowanie JSON zamiast wyniku liczbowego |
 
-Tryb `auto` wybiera kolejno CUDA, MPS albo CPU. Zakres wersji 1.0 obejmuje lokalne modele
-completion zgodne z `AutoModelForCausalLM`.
+Tryb `auto` wybiera kolejno CUDA, MPS albo CPU. Obsługiwane są modele completion zgodne
+z `AutoModelForCausalLM` oraz lokalne Transformery z tokenizerem bajtowym UTF-8.
 
 ## Artefakty
 
-Każdy `run` tworzy z suffixem daty, aby zapobiec przypadkowemu nadpisaniu wyników:
+Bez `--output-dir` każde uruchomienie tworzy katalog z datą, aby zapobiec przypadkowemu
+nadpisaniu wyników:
 
 ```text
 runs/<model>/<suite>-<timestamp>/
@@ -128,15 +160,21 @@ runs/<model>/<suite>-<timestamp>/
 └── summary.json
 ```
 
-`manifest.json` zapisuje model, revision, urządzenie, wersje Torch i
-Transformers, konfigurację suite, hash suite oraz czas uruchomienia.
+`manifest.json` zapisuje model, revision, urządzenie, wersje użytych bibliotek,
+konfigurację suite, hash suite, czas uruchomienia i status. Podany przez
+`--output-dir` katalog musi być nowy; benchmark nie nadpisuje istniejących artefaktów.
 
-`outputs.jsonl` zawiera prompt, completion, pełny oceniany tekst, seed, liczbę
-tokenów, czas generacji, wynik `0/1` i szczegóły wykrytego błędu. Puste
-completion zawsze otrzymuje `FAIL`.
+`outputs.jsonl` zawiera prompt, numer próby, completion, pełny wygenerowany tekst,
+oceniany prefiks, seed, liczbę znaków i tokenów, przyczynę zakończenia, czas generacji,
+wynik `0/1` oraz wszystkie wykryte błędy. Niepoprawne bajty UTF-8 są zachowane
+szesnastkowo i nie zwiększają pokrycia. Puste completion zawsze otrzymuje `FAIL`.
 
-`summary.json` zawiera końcowy score, liczbę PASS/FAIL, czas wykonania i rozkład
-błędów według reguł.
+`summary.json` zawiera pokrycie każdego promptu, liczbę prób, wygenerowanych,
+ocenionych i odrzuconych znaków, `issues_per_10k_chars`, `clean_output_rate`, liczbę
+niepoprawnych i uciętych wyjść oraz rozkład wszystkich błędów według reguł. Status
+`incomplete` w `manifest.json` oznacza, że co najmniej jeden prompt nie osiągnął kwoty
+przed limitem prób. Komenda nadal zapisuje artefakty, wypisuje informację o brakującym
+pokryciu na `stderr` i kończy się kodem `2`.
 
 ## Zestaw promptów
 
@@ -191,20 +229,25 @@ uv run typobenchpl check wynik.txt
 printf '%s' 'To jest poprawne.' | uv run typobenchpl check -
 ```
 
-Opcja `--json` zwraca regułę oraz zakres błędu. Kod wyjścia procesu to `0` dla
-PASS, `1` dla FAIL oraz `2` dla błędnego użycia lub wejścia.
+Opcja `--json` zwraca listę wszystkich błędów wraz z regułami i zakresami. Kod wyjścia
+procesu to `0` dla PASS, `1` dla FAIL oraz `2` dla błędnego użycia lub wejścia.
 
 ## Scoring JSONL
 
-Komenda `score` ocenia gotowy plik JSONL z tekstami wygenerowanymi przez dowolny
-system.
+Komenda `score` ocenia rekordy JSONL z tekstami wygenerowanymi przez dowolny system.
 
-Plik wejściowy musi być w formacie JSONL:
+Wejście musi być w formacie JSONL. Każdy rekord zawiera tekst w polu `text` albo
+surowe bajty zapisane szesnastkowo w `text_bytes_hex`:
 
 ```json
 {"id":"run-0001","text":"Pierwszy poprawny tekst."}
 {"id":"run-0002","text":"Drugi,, błędny tekst."}
 ```
+
+Opcjonalne pola `evaluated_chars` i `generated_chars` pozwalają zachować informacje
+o przycięciu tekstu. Dla pola `text` domyślną wartością `evaluated_chars` jest długość
+tekstu. Dla `text_bytes_hex` wynosi ona `0`, dlatego liczbę ocenionych znaków należy
+podać jawnie. `generated_chars` domyślnie przyjmuje wartość `evaluated_chars`.
 
 Domyślnie ocenianych jest dokładnie 1000 rekordów:
 
@@ -214,8 +257,10 @@ uv run typobenchpl score outputs.jsonl -n 5000
 uv run typobenchpl score outputs.jsonl -n 1000 --json
 ```
 
-Jeżeli plik ma mniej niż `n` rekordów, komenda kończy się błędem. Rekordy ponad
-limit są pomijane.
+Jeśli ścieżka nie zostanie podana, `score` czyta dane ze standardowego wejścia.
+Jeżeli wejście ma mniej niż `n` rekordów, komenda kończy się błędem. Rekordy ponad
+limit są pomijane. Domyślnie komenda wypisuje `issues_per_10k_chars`; wariant `--json`
+zwraca pełne podsumowanie, w tym liczbę wszystkich błędów i ocenionych znaków.
 
 ## Weryfikacja
 
@@ -242,8 +287,8 @@ regułę i dokładny zakres błędu.
 Rozpoznane URL-e, adresy e-mail, liczby dziesiętne, godziny, wyniki liczbowe,
 adresy IPv4 i numery wersji są chronione przed regułami interpunkcji.
 
-Wersja 1.0 jest przygotowana do oceny zwykłej prozy. Markdown, kod źródłowy i
-ścieżki plików używają składni, której walidator obecnie nie rozpoznaje, dlatego
+Bieżący zestaw reguł jest przeznaczony do oceny zwykłej prozy. Markdown, kod źródłowy
+i ścieżki plików używają składni, której walidator obecnie nie rozpoznaje, dlatego
 wyniki dla takich treści mogą być błędne.
 
 ## Testy
